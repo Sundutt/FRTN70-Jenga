@@ -1,91 +1,147 @@
 from smc import getMinimalArgParser, getRobotFromArgs
 from smc.control.cartesian_space import getClikArgs
-from smc.control.cartesian_space.cartesian_space_point_to_point import moveL
+from smc.control.cartesian_space.cartesian_space_point_to_point import moveL, moveUntilContact
 
 import argparse
 import numpy as np
 import pinocchio as pin
 import time
 
-nbr_layers = 3
+nbr_layers = 4
+
 block_width = 0.026
 block_length = 0.07
 block_height = 0.015
-tool_offset = 0.145
+tool_offset = 0.148 #0.145
 
+even_rotation = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
+odd_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    
 def get_args() -> argparse.Namespace:
     parser = getMinimalArgParser()
-    #parser.set_defaults()
+    parser.set_defaults(
+    robot_ip="192.168.1.150",
+    plotter=False,
+    visualizer=False,
+    gripper="onrobot",
+    goal_error="0.002"    
+    )
     parser.description = "Build Jenga tower with fixed poses."
     parser = getClikArgs(parser)
     return parser.parse_args()
 
-def pick_up_new_block():
-        # Go to upper position
-        T_w_goal.translation = np.array([0.4, -0.4, 0.1+tool_offset])
-        print(f"Move above pick up location: {T_w_goal.translation}")
-        moveL(args, robot, T_w_goal)
-        T_w_goal.rotation = np.array([
-        [1,  0,  0],
-        [0, -1,  0],
-        [0,  0, -1]
-        ])
-        print("Rotating to picking rotation")
-        moveL(args, robot, T_w_goal)
+# ---------- PRIMITIVE FUNCTIONS ----------
+def move_wstop(robot_rotation, robot_position):
+    T = pin.SE3(robot_rotation, robot_position)
+    print(f"Moving to: {robot_position}")
+    moveL(args, robot, T)
+    robot.stopRobot()
+    #robot.sendVelocityCommandToReal([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-        # Pick up
-        T_w_goal.translation = np.array([0.4, -0.4, tool_offset])
-        print(f"Moving to pick up location: {T_w_goal.translation}")
-        moveL(args, robot, T_w_goal)
-        robot.sendVelocityCommandToReal([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        time.sleep(1.0)
-        robot.closeGripper()
-        time.sleep(1.0)
+def move_nostop(robot_rotation, robot_position):
+    T = pin.SE3(robot_rotation, robot_position)
+    print(f"Moving to: {robot_position}")
+    moveL(args, robot, T)
 
-        # Move up again
-        T_w_goal.translation = np.array([0.4, -0.4, 0.1+tool_offset])
-        print(f"Moving back up: {T_w_goal.translation}")
-        moveL(args, robot, T_w_goal)
+def movecontact_wstop(speed=np.array([0, 0, 0.02, 0, 0, 0])):
+    print(f"Moving until contact with speed: {speed}")
+    moveUntilContact(args, robot, speed)
+    robot.stopRobot()
+ 
+def close_wsleep(sleep_duration=1.0):
+    robot.closeGripper()
+    time.sleep(sleep_duration)
+
+def open_wsleep(sleep_duration=1.0):
+    robot.openGripper()
+    time.sleep(sleep_duration)
+
+# ---------- JENGA FUNCTIONS ----------
+def pick_up_new_block(current_layer):
+    # Go to upper position
+    pickup_rotation = odd_rotation
+    above_pickup_position = np.array([0.4, -0.4, block_height*(current_layer+1)+tool_offset])
+    print("Move above pick up location.")
+    move_wstop(pickup_rotation, above_pickup_position)
+
+    # Pick up
+    on_pickup_position = np.array([0.4, -0.4, tool_offset])
+    print("Moving to pick up location.")
+    #move_wstop(pickup_rotation, on_pickup_position)
+    pickup_speed = np.array([0.0, 0.0, 0.02, 0.0, 0.0, 0.0])
+    movecontact_wstop(pickup_speed)
+    close_wsleep()
+
+    # Move up again
+    print("Moving back up.")
+    move_wstop(pickup_rotation, above_pickup_position)
+
 
 def place_block(current_block, current_layer):
     # Upper position above tower
+    is_odd_layer = False
+    placing_rotation = np.zeros((3, 3))
+    above_placing_position = np.zeros(3)
+    on_placing_position = np.zeros(3)
+
     if current_layer % 2 == 0:  # even layer
+        is_odd_layer = False
         print("Even layer")
-        T_w_goal.translation = np.array([0.1 + block_width - (current_block*block_width), -0.45 - block_width, 0.3+tool_offset])
-        print(f"Moving above tower: {T_w_goal.translation}")
-        moveL(args, robot, T_w_goal)
-        T_w_goal.rotation = np.array([
-        [0, 1,  0],
-        [1, 0,  0],
-        [0, 0, -1]
-        ])
-        print("Rotating to even rotation")
-        moveL(args, robot, T_w_goal)
+        placing_rotation = even_rotation
+        above_placing_position = np.array([0.25 + block_width*(1-current_block), -0.35-block_width, block_height*(current_layer+2)+tool_offset])
+        on_placing_position = np.array([0.25+block_width*(1-current_block), -0.35-block_width, block_height*(current_layer-1)+tool_offset])
     else:  # odd layer
+        is_odd_layer = True
         print("Odd layer")
-        T_w_goal.translation = np.array([0.1, -0.45 - (current_block*block_width), 0.3+tool_offset])
-        print(f"Moving above tower: {T_w_goal.translation}")
-        moveL(args, robot, T_w_goal)
-        T_w_goal.rotation = np.array([
-        [1,  0,  0],
-        [0, -1,  0],
-        [0,  0, -1]
-        ])
-        print("Rotating to odd rotation")
-        moveL(args, robot, T_w_goal)
+        placing_rotation = odd_rotation
+        above_placing_position = np.array([0.25, -0.35-(current_block*block_width), block_height*(current_layer+2)+tool_offset])
+        on_placing_position = np.array([0.25, -0.35-(current_block*block_width), block_height*(current_layer-1)+tool_offset])
+    
+    print("Moving above tower.")
+    move_wstop(placing_rotation, above_placing_position)
     
     # Lower block and realease
-    T_w_goal.translation[2] = (current_layer*block_height) - block_height + tool_offset
-    print(f"Moving to place location: {T_w_goal.translation}")
-    moveL(args, robot, T_w_goal)
-    robot.sendVelocityCommandToReal([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    robot.openGripper()
-    time.sleep(1.0)
+    print("Moving to place location.")
+    move_wstop(placing_rotation, on_placing_position)
+    movecontact_wstop()
+    open_wsleep()
+ 
+    if current_block == 2:   
+        #Merge 
+        merge_blocks(is_odd_layer, on_placing_position)        
+    else:
+        # Move up
+        print("Moving back up.")
+        move_wstop(placing_rotation, above_placing_position)
 
-    # Move up
-    T_w_goal.translation[2] = 0.3+tool_offset
-    print(f"Moving back up: {T_w_goal.translation}")
-    moveL(args, robot, T_w_goal)
+def merge_blocks(is_odd_layer, placing_position):
+    if is_odd_layer:
+        above_merge_position = placing_position + np.array([0, block_width, 2*block_height])
+        on_merge_position = placing_position + np.array([0, block_width, 0.0*block_height])
+        print("Moving above merge position.")
+        move_wstop(odd_rotation, above_merge_position)
+        move_wstop(even_rotation, above_merge_position)
+        print("Moving to merge position.")
+        #move_wstop(even_rotation, on_merge_position)
+        movecontact_wstop()
+        close_wsleep()
+        open_wsleep()
+        print("Moving back up.")
+        move_wstop(even_rotation, above_merge_position)
+    else:
+        above_merge_position = placing_position + np.array([block_width, 0, 2*block_height])
+        on_merge_position = placing_position + np.array([block_width, 0, 0.0*block_height])
+        print("Moving above merge position.")
+        move_wstop(even_rotation, above_merge_position)
+        move_wstop(odd_rotation, above_merge_position)
+        print("Moving to merge position.")
+        #move_wstop(odd_rotation, on_merge_position)
+        movecontact_wstop()
+        close_wsleep()
+        open_wsleep()
+        print("Moving back up.")
+        move_wstop(odd_rotation, above_merge_position)
+    
 
 
 if __name__ == "__main__":
@@ -103,12 +159,12 @@ if __name__ == "__main__":
     moveL(args, robot, T_w_goal)
     robot.openGripper()
     
-    try:?!?jedi=0, ?!?              (start: int, *_*stop: int*_*, step: int=...) ?!?jedi?!?
-        #Build Jenga ?!?jedi=0, tover?!? (stop: int) ?!?jedi?!?
+    try:
+        #Build Jenga tover
         for i in range(1, nbr_layers+1):
             for k in range(0, 3):
-               pick_up_new_block()
-               place_block(k, i) 
+                pick_up_new_block(i)
+                place_block(k, i)                     
 
     except KeyboardInterrupt:
         print("Interrupted by user.")
