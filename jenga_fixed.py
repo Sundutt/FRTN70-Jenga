@@ -24,7 +24,8 @@ def get_args() -> argparse.Namespace:
     plotter=False,
     visualizer=False,
     gripper="onrobot",
-    goal_error="0.002"    
+    goal_error="0.002",
+    contact_detecting_force="1.5",    
     )
     parser.description = "Build Jenga tower with fixed poses."
     parser = getClikArgs(parser)
@@ -68,8 +69,7 @@ def pick_up_new_block(current_layer):
     on_pickup_position = np.array([0.4, -0.4, tool_offset])
     print("Moving to pick up location.")
     #move_wstop(pickup_rotation, on_pickup_position)
-    pickup_speed = np.array([0.0, 0.0, 0.02, 0.0, 0.0, 0.0])
-    movecontact_wstop(pickup_speed)
+    movecontact_wstop()
     close_wsleep()
 
     # Move up again
@@ -102,13 +102,13 @@ def place_block(current_block, current_layer):
     
     # Lower block and realease
     print("Moving to place location.")
-    move_wstop(placing_rotation, on_placing_position)
     movecontact_wstop()
+    last_placed_position = robot.T_w_e.translation
     open_wsleep()
  
     if current_block == 2:   
         #Merge 
-        merge_blocks(is_odd_layer, on_placing_position)        
+        merge_blocks(is_odd_layer, last_placed_position)        
     else:
         # Move up
         print("Moving back up.")
@@ -122,8 +122,8 @@ def merge_blocks(is_odd_layer, placing_position):
         move_wstop(odd_rotation, above_merge_position)
         move_wstop(even_rotation, above_merge_position)
         print("Moving to merge position.")
-        #move_wstop(even_rotation, on_merge_position)
-        movecontact_wstop()
+        move_wstop(even_rotation, on_merge_position)
+        #movecontact_wstop()
         close_wsleep()
         open_wsleep()
         print("Moving back up.")
@@ -135,8 +135,8 @@ def merge_blocks(is_odd_layer, placing_position):
         move_wstop(even_rotation, above_merge_position)
         move_wstop(odd_rotation, above_merge_position)
         print("Moving to merge position.")
-        #move_wstop(odd_rotation, on_merge_position)
-        movecontact_wstop()
+        move_wstop(odd_rotation, on_merge_position)
+        #movecontact_wstop()
         close_wsleep()
         open_wsleep()
         print("Moving back up.")
