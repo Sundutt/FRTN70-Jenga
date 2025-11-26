@@ -148,8 +148,10 @@ def main():
      
         #CALIBRATE ROBOT
         #Find the robot coord of the aruco
-        print("\nChoose robot coord on fixed aruco code \n 'c' to capture current pose of robot (put over aruco) \n 'v' use fixed coord \n 'q' quit after choosing robot coord")
+        print("\nChoose robot coord on fixed aruco code \n 'c' to capture current pose of robot (put over aruco) \n 'v' use fixed coord \n 'r' to remove last point \n 'q' quit after choosing robot coord")
         T_robot_marker_fixed = None
+        R_robot_marker = []
+        t_robot_marker = []    
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -158,25 +160,42 @@ def main():
             if key == ord('c'):
                 robot._step()
                 T_robot_marker_fixed = np.array(robot.T_w_e)
-                #T_w_e = np.array(robot.T_w_e)
-                #T_robot_offset = np.eye(4)
-                #T_robot_offset[:3,3] = np.array([0.0, 0.0, 0.152])
-                #T_robot_marker_fixed = (T_w_e @ T_robot_offset)
+                R_robot_marker.append(T_robot_marker_fixed[:3, :3])
+                t_robot_marker.append(T_robot_marker_fixed[:3, 3])
                 print("T_robot_marker_fixed=\n", T_robot_marker_fixed)
-            elif key == ord('v'):                
+                print(f"Saved point to array. Need 3 points, currently have {len(R_robot_marker)}.")
+            elif key == ord('r'):
+                if len(R_robot_marker) < 1:
+                    print("Nothing to remove")
+                    continue
+                print("Removed last added point, now {len(R_robot_marker) points saved.")
+                R_robot_marker.remove(-1)
+                t_robot_marker.remove(-1)
+            elif key == ord('v'):     
+                #TODO: Add more points           
                 T_robot_marker_fixed = np.array([[0.99991516, -0.01210937, 0.00479953, 0.48303724], 
                                                  [-0.01207788, -0.99990569, -0.00653728, -0.3998456], 
                                                  [0.00487824, 0.00647876, -0.99996711, 0.15247327], 
                                                  [0, 0, 0, 1]])
                 print("T_robot_marker_fixed=\n", T_robot_marker_fixed)
             elif key == ord('q'):
+                if len(R_robot_marker) < 3:
+                    print(f"Need atleast 3 points, currently have {len(R_robot_marker}.")
+                    continue
                 print("Done with robot coord, quitting")
                 break
             cv2.imshow("Calibration", frame)
         robot.unSetFreedrive()
+        print("Robot to marker pose.")
+        for r, t in zip(R_robot_marker, t_robot_marker):
+            print(r, t)
+
 
         print("Looking for FIXED aruco marker")
         T_robot_camera = None
+        R_camera_marker = []
+        t_camera_marker = []
+        cur_marker = 1
         # Step 1: Detect FIXED marker to compute camera pose
         while T_robot_camera is None:
             ret, frame = cap.read()
@@ -186,16 +205,30 @@ def main():
             T_camera_marker_fixed, marker_id = detect_aruco_pose(
                 frame, aruco_dict, aruco_params, camera_matrix, dist_coeffs, marker_length_fixed
             )
-
             if marker_id == 1:  # assuming fixed marker has ID=1
                 print("Found fixed marker. Calibrating camera pose...")
                 T_robot_camera = T_robot_marker_fixed @ invert_transform(T_camera_marker_fixed)
                 print("T_robot_camera =\n", T_robot_camera)
-
+            #ADDED THIS IF, IS IT CORRECT?
+            if marker_id == cur_marker:
+                cur_marker++
+                print(f"Found marker {marker_id}, adding to array.")
+                R_camera_marker.append(T_camera_marker_fixed[:3, :3])
+                t_camera_marker.append(T_camera_marker_fixed[:3, 3])
             cv2.imshow("Calibration", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
+                if len(R_camera_marker) < 3:
+                    print("Need more points")
+                    continue
                 break
 
+        #TODO:FIX THIS
+        R_robot_camera, t_robot_camera = cv2.calibrateHandEye(
+            R_robot_camera, 
+            T_robot_marker, 
+            R_camera_marker, 
+            t_camera_marker,
+            )
         print("Camera pose calibrated.")
         print("Now detecting other markers.")
 
