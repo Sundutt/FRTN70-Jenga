@@ -25,10 +25,17 @@ def get_args() -> argparse.Namespace:
 #Helper Functions
 def rvec_tvec_to_matrix(rvec, tvec):
     """Convert OpenCV rvec/tvec to a 4x4 transformation matrix."""
-    R, _ = cv2.Rodrigues(rvec)
     T = np.eye(4)
+    r = np.array(rvec)
+    if r.shape == (3,) or r.shape == (3,1) or r.size == 3:
+        R, _ = cv2.Rodrigues(r.reshape(3))
+    elif r.shape == (3,3):
+        R = r
+    else:
+        print("rvec is wrong shape, must be  (3,) or (3,3).")
+        return None
     T[:3, :3] = R
-    T[:3, 3] = tvec.reshape(3)
+    T[:3, 3] = np.array(tvec).reshape(3)
     return T
 
 def invert_transform(T):
@@ -183,8 +190,8 @@ def main():
                     print("Nothing to remove")
                     continue
                 print("Removed last added point, now {len(R_robot_marker) points saved.")
-                R_robot_marker.remove(-1)
-                t_robot_marker.remove(-1)
+                R_robot_marker.pop()
+                t_robot_marker.pop()
             elif key == ord('v'):     
                 R_robot_marker.clear()
                 t_robot_marker.clear()
@@ -213,7 +220,7 @@ def main():
         for r, t in zip(R_robot_marker, t_robot_marker):
             print(f"R = {r} \nt = {t}")
 
-
+        #-------------------- CALIBRATE FIXED ARUCO --------------------
         print("Looking for FIXED aruco marker, press 'q' after finding 4 markers.")
         T_robot_camera = None
         R_camera_marker = []
@@ -241,7 +248,7 @@ def main():
                     R, _ = cv2.Rodrigues(rvec)   
                     R_camera_marker.append(R)
                     t_camera_marker.append(tvec.reshape(3,1))
-                    print(f"Found fixed marker {cur_id}, adding to array.")
+                    print(f"Found fixed marker {cur_id} with R={R} and t={tvec}, adding to array.")
                     cur_id += 1
                 cv2.imshow("Calibration", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -249,7 +256,7 @@ def main():
                     print("Currently have {len(R_camera_marker)}. Need 4 points.")
                     continue
                 break
-
+        #Calibrate Robot to Camera frame
         R_robot_camera, t_robot_camera = cv2.calibrateHandEye(
             R_robot_marker, 
             t_robot_marker, 
@@ -258,11 +265,15 @@ def main():
             method=cv2.CALIB_HAND_EYE_DANIILIDIS
             )
         T_robot_camera = rvec_tvec_to_matrix(R_robot_camera, t_robot_camera)
-        
+        #Save to file 
+        np.savez("robot_camera_calibration.npz",
+                T_robot_camera)
+
         print("Camera pose calibrated.")
         print("T_robot_camera = \n", T_robot_camera)
+        
+        #-------------------- TESTING --------------------
         print("Now detecting other markers.")
-
         #Step 2: Detect ANY marker and convert to robot frame
         while True:
             ret, frame = cap.read()
@@ -305,11 +316,9 @@ def main():
             cv2.imshow("Calibration", frame)
             if cv2.waitKey(1) == ord('q'):
                 break
-       
-        #Save to file 
-        np.savez("robot_camera_calibration.npz",
-                T_robot_camera)
+    
 
+   
     except KeyboardInterrupt:
         print("Interrupted by user.") 
     

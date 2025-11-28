@@ -147,7 +147,7 @@ def main():
     square_length = 0.012
 
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
-    aruco_params = aruco.DetectorParameters_create()
+    aruco_params = aruco.DetectorParameters()
     board = aruco.CharucoBoard(size=(10, 7), squareLength=square_length, markerLength=marker_length_charuco, dictionary=aruco_dict)
 
     # -------------------------
