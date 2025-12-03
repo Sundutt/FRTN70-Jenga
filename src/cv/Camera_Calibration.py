@@ -5,17 +5,17 @@ import time
 
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 
-marker_length = 0.008   # meters
-square_length = 0.012   # meters
+marker_length = 0.015   # meters
+square_length = 0.025   # meters
 
 board = aruco.CharucoBoard(
-    size=(10, 7),
+    size=(9, 6),
     squareLength=square_length,
     markerLength=marker_length,
     dictionary=aruco_dict
 )
 
-url = "http://klasthorgren:video123@10.15.177.67:8081/video"
+url = "http://klasthorgren:video123@192.168.1.170:8081/video"
 cap = cv2.VideoCapture(url)
 
 all_corners = []
@@ -24,31 +24,34 @@ img_size = None
 
 print("Move the board slowly. Press 'q' to finish.")
 
+last_time = 0.0
 while True:
     ret, frame = cap.read()
     if not ret:
         break
+    
+    now = time.time()
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if now - last_time > 0.1:
+        last_time = now
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict)
+        corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict)
 
-    if ids is not None:
-        _, charuco_corners, charuco_ids = aruco.interpolateCornersCharuco(
-            markerCorners=corners,
-            markerIds=ids,
-            image=gray,
-            board=board
-        )
+        if ids is not None:
+            _, charuco_corners, charuco_ids = aruco.interpolateCornersCharuco(
+                markerCorners=corners,
+                markerIds=ids,
+                image=gray,
+                board=board
+            )
         
-        if charuco_ids is not None:
-            print("Corners detected this frame:", len(charuco_ids))
-            if len(charuco_ids) > 4:
-                all_corners.append(charuco_corners)
-                all_ids.append(charuco_ids)
-                img_size = gray.shape[::-1]
-
-    time.sleep(1)
+            if charuco_ids is not None:
+                print("Corners detected this frame:", len(charuco_ids))
+                if len(charuco_ids) > 4:
+                    all_corners.append(charuco_corners)
+                    all_ids.append(charuco_ids)
+                    img_size = gray.shape[::-1]
 
     cv2.imshow("Calibration", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
