@@ -9,12 +9,15 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python libs
-RUN pip install ur-rtde 
-RUN pip install pymodbus numpy scipy
+RUN pip install ur-rtde \
+    pymodbus \
+    numpy \
+    scipy
 
 WORKDIR /app
 
-# Copy ALL Python files
+# Copy ALL project files
 COPY . .
 
-CMD ["python3", "control_test.py"]
+# Default command opens a shell so the user can choose what script to run
+CMD ["/bin/bash"]
