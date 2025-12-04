@@ -48,7 +48,7 @@ while True:
         
             if charuco_ids is not None:
                 print("Corners detected this frame:", len(charuco_ids))
-                if len(charuco_ids) > 4:
+                if len(charuco_ids) > 35:
                     all_corners.append(charuco_corners)
                     all_ids.append(charuco_ids)
                     img_size = gray.shape[::-1]
