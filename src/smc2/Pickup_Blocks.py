@@ -6,6 +6,8 @@ import rtde_receive
 from scipy.spatial.transform import Rotation as R_scipy
 import time
 
+ROBOT_IP = "192.168.1.150"
+
 rtde_c = rtde_control.RTDEControlInterface(ROBOT_IP)
 rtde_r = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
 
