@@ -1,23 +1,28 @@
 FROM python:3.10-slim
 
-# Install build tools and dependencies
+# Install OS dependencies required for OpenCV + ArUco + Video + UI
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
     libboost-all-dev \
+    libgl1 \
+    libglib2.0-0 \
+    libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python libs
-RUN pip install ur-rtde \
-    pymodbus \
+# Install Python libraries
+RUN pip install \
+    opencv-contrib-python \
     numpy \
-    scipy
+    scipy \
+    ur-rtde \
+    pymodbus
 
 WORKDIR /app
 
-# Copy ALL project files
+# Copy project to container
 COPY . .
 
-# Default command opens a shell so the user can choose what script to run
+# Default: enter interactive shell
 CMD ["/bin/bash"]
