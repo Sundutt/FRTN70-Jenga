@@ -15,7 +15,7 @@ board = aruco.CharucoBoard(
     dictionary=aruco_dict
 )
 
-url = "http://klasthorgren:video123@10.17.117.27:8081/video"
+url = "http://klasthorgren:video123@10.37.196.204:8081/video"
 cap = cv2.VideoCapture(url)
 
 all_corners = []
@@ -32,7 +32,7 @@ while True:
     
     now = time.time()
 
-    if now - last_time > 1:
+    if now - last_time > 0.5:
         last_time = now
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -47,8 +47,8 @@ while True:
             )
         
             if charuco_ids is not None:
-                print("Corners detected this frame:", len(charuco_ids))
                 if len(charuco_ids) > 35:
+                    print("Corners detected this frame:", len(charuco_ids))
                     all_corners.append(charuco_corners)
                     all_ids.append(charuco_ids)
                     img_size = gray.shape[::-1]
