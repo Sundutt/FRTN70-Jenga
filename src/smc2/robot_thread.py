@@ -1,0 +1,196 @@
+# robot_thread.py
+import rtde_control
+import rtde_receive
+from scipy.spatial.transform import Rotation as R_scipy
+import xmlrpc.client
+import numpy as np
+import time
+from shared_state import pause_event
+
+# Robot / gripper IPs (same values as before)
+ROBOT_IP = "192.168.1.150"
+GRIPPER_IP = "192.168.1.1"
+
+# Tower and geometry constants (identical to original)
+block_width = 0.028
+block_height = 0.015
+
+tower_origin_base = np.array([0.1, -0.3, 0.0])
+
+even_rotation = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
+odd_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
+# Initialize RTDE interfaces and gripper
+class RobotWorker:
+    def __init__(self, cmd_queue, resp_queue):
+        self.cmd_queue = cmd_queue
+        self.resp_queue = resp_queue
+        # initialize robot interfaces
+        print("Initializing RTDEControlInterface and RTDEReceiveInterface...")
+        self.rtde_c = rtde_control.RTDEControlInterface(ROBOT_IP)
+        self.rtde_r = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
+        self.cb = xmlrpc.client.ServerProxy(f"http://{GRIPPER_IP}:41414/")
+        print("RTDE interfaces initialized.")
+
+    def open_gripper(self):
+        """Fully open the 2FG7 using maximum external width."""
+        time.sleep(0.5)
+        max_width = self.cb.twofg_get_max_external_width(0)
+        self.cb.twofg_grip_external(0, max_width, 140, 50)   # (id, width, force, speed)
+        time.sleep(0.5)
+
+    def close_gripper(self):
+        """Fully close the 2FG7."""
+        self.cb.twofg_grip_external(0, 0.0, 140, 50)
+        time.sleep(0.5)
+
+    def moveL(self, t, R, speed=0.2, accel=0.4):
+        """
+        Move UR robot linearly (moveL) with translation vector t and rotation matrix R.
+        """
+        rot = R_scipy.from_matrix(R)
+        rx, ry, rz = rot.as_rotvec()
+
+        t = np.array(t).reshape(3,)
+        pose = [t[0], t[1], t[2], rx, ry, rz]
+
+        # Start async motion
+        self.rtde_c.moveL(pose, speed, accel, True)
+
+        last_state = None
+
+        while True:
+            # Pause if hand detected
+            if pause_event.is_set():
+                self.rtde_c.stopL(0.5, True)
+
+                # Wait until hand disappears
+                while pause_event.is_set():
+                    time.sleep(0.05)
+
+                # Resume movement
+                self.rtde_c.moveL(pose, speed, accel, True)
+
+            # Poll async motion state
+            state = self.rtde_c.getAsyncOperationProgress()
+
+            # Motion finished when it toggles negative
+            if state < 0 and state != last_state:
+                break
+
+            last_state = state
+            time.sleep(0.01)
+
+    def pick_up_block_from_vision(self, T_base_block):
+        self.open_gripper()
+        # Approach from above
+        pickup_height_offset = 0.05  # approach 10 cm above detected block
+        t_above = T_base_block[:3, 3].copy()
+        t_above[2] += pickup_height_offset
+
+        R_block = T_base_block[:3, :3]
+        R_flip = R_scipy.from_euler('x', np.pi).as_matrix()      # Flip down
+        R_z90 = R_scipy.from_euler('z', np.pi/2).as_matrix()     # Rotate around Z
+        R_gripper = R_block @ R_flip @ R_z90
+
+        # Move above block
+        self.moveL(t_above, R_gripper)
+
+        #t_pickup = t_above.copy()
+        #t_pickup[2] -= 0.118
+        self.rtde_c.moveUntilContact([0, 0, -0.02, 0, 0, 0])
+
+        #moveL(t_pickup, R_gripper)
+
+        self.close_gripper()
+
+        # Move back up
+        self.moveL(t_above, R_gripper)
+
+    def place_block(self, current_block, current_layer):
+        is_even = (current_layer % 2 == 0)
+
+        # Create transform
+        T_place = np.eye(4)
+
+        # Base tower reference
+        T_place[:3, 3] = tower_origin_base.copy()
+
+        # Horizontal placement depending on orientation
+        if is_even:
+            # Blocks along X direction → shift X
+            T_place[0, 3] += block_width * (1 - current_block)
+            T_place[:3, :3] = even_rotation
+        else:
+            # Blocks along Y direction → shift Y
+            T_place[1, 3] -= block_width * (current_block - 1)
+            T_place[:3, :3] = odd_rotation
+
+        T_place[2, 3] = current_layer * block_height + 0.05
+
+        self.moveL(T_place[:3, 3], T_place[:3, :3])
+
+        self.rtde_c.moveUntilContact([0, 0, -0.02, 0, 0, 0])
+
+        self.open_gripper()
+
+        if current_block == 2:
+            new_pose = T_place.copy()
+
+            # get z value
+            new_pose[2, 3] = self.rtde_r.getActualTCPPose()[2]
+
+            # higher 4 cm
+            T_place[2, 3] = new_pose[2, 3] + 0.04
+            self.moveL(T_place[:3, 3], T_place[:3, :3])
+
+            # move to x-y orgin and turn gripper
+            T_place[:2, 3] = tower_origin_base[:2]
+            if is_even:
+                T_place[:3, :3] = odd_rotation
+            else:
+                T_place[:3, :3] = even_rotation
+
+            self.moveL(T_place[:3, 3], T_place[:3, :3])
+
+            # lower again
+            T_place[2, 3] = new_pose[2, 3]
+            self.moveL(T_place[:3, 3], T_place[:3, :3])
+
+            self.close_gripper()
+            self.open_gripper()
+
+        # raise end effector
+        T_place[2, 3] += 0.10
+        self.moveL(T_place[:3, 3], T_place[:3, :3])
+
+    def run(self):
+        print("RobotWorker started, waiting for commands...")
+        running = True
+        while running:
+            cmd, payload = self.cmd_queue.get()
+            if cmd == "shutdown":
+                print("RobotWorker received shutdown.")
+                running = False
+                break
+
+            if cmd == "pick_and_place":
+                block_id, T_base_block = payload
+                print(f"RobotWorker executing pick_and_place for block {block_id}...")
+                try:
+                    # Execute pick/place exactly as original logic
+                    self.pick_up_block_from_vision(T_base_block)
+                    # place_block uses (current_block, current_layer)
+                    current_block = (block_id - 1) % 3
+                    current_layer = (block_id - 1) // 3
+                    self.place_block(current_block, current_layer)
+                    # notify completion
+                    try:
+                        self.resp_queue.put("picked_and_placed")
+                    except Exception:
+                        pass
+                    print(f"RobotWorker finished pick_and_place for block {block_id}.")
+                except Exception as e:
+                    print(f"Exception while performing pick_and_place: {e}")
+
+        print("RobotWorker stopped.")
