@@ -15,7 +15,7 @@ GRIPPER_IP = "192.168.1.1"
 block_width = 0.028
 block_height = 0.015
 
-tower_origin_base = np.array([0.1, -0.3, 0.0])
+tower_origin_base = np.array([0.3, -0.25, 0.0])
 
 even_rotation = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
 odd_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -92,6 +92,8 @@ class RobotWorker:
         R_flip = R_scipy.from_euler('x', np.pi).as_matrix()      # Flip down
         R_z90 = R_scipy.from_euler('z', np.pi/2).as_matrix()     # Rotate around Z
         R_gripper = R_block @ R_flip @ R_z90
+
+        print(R_gripper)
 
         # Move above block
         self.moveL(t_above, R_gripper)
