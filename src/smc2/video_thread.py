@@ -113,14 +113,17 @@ class VideoWorker:
                 for idx, marker_id in enumerate(ids.flatten()):
 
                     # Decide if this marker should be processed
-                    should_process = (
+                    """should_process = (
                         (marker_id == 0 and self.T_base_cam is None) or
                         (marker_id == self.next_block_id)
                     )
 
                     if not should_process:
                         continue
-                    
+                    """
+                    """if marked_id == 0 and self.T_base_cam is not None:
+                        continue
+
                     if marker_id == 0:
                         size = marker_size_calibration
                     else:
@@ -137,20 +140,46 @@ class VideoWorker:
                     tvec = tvecs[0]
 
                     T_cam_marker = rvec_tvec_to_T(rvec, tvec)
-
+                    """
                     if marker_id == 0 and self.T_base_cam is None:
+                        size = marker_size_calibration
+                        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
+                            [corners[idx]],
+                            size,
+                            camera_matrix,
+                            dist_coeffs
+                        )
+
+                        rvec = rvecs[0]
+                        tvec = tvecs[0]
+                        T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+
                         self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
                         self.send_command = True
 
-                    if self.T_base_cam is not None:
+                    if marker_id != 0 and self.T_base_cam is not None:
+                        size = marker_size_block
+                        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
+                            [corners[idx]],
+                            size,
+                            camera_matrix,
+                            dist_coeffs
+                        )
+
+                        rvec = rvecs[0]
+                        tvec = tvecs[0]
+                        T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+
                         T_base_block = self.T_base_cam @ T_cam_marker
 
                         if T_base_block[2, 2] < 0.9:
                             continue
+                        
+                        if T_base_block[3, 1] > -0.3:
+                            continue                     
 
-                        if marker_id != 0:
-                            block_poses_in_base[marker_id] = T_base_block
-
+                        block_poses_in_base[marker_id] = T_base_block
+                        break
                         #cv2.drawFrameAxes(
                         #   frame, camera_matrix, dist_coeffs, rvec, tvec, 0.03
                         #)
