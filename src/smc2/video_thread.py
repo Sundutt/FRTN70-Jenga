@@ -8,7 +8,7 @@ import mediapipe as mp
 from shared_state import pause_event
 
 # Keep identical constants/params as original script
-url = "http://klasthorgren:video123@10.37.196.204:8081/video"
+url = "http://klasthorgren:video123@10.29.147.128:8081/video"
 
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
@@ -52,7 +52,7 @@ class VideoWorker:
         self._running = True
         self.next_block_id = 1
         self.T_base_cam = None
-        self.send_command = True
+        self.send_command = False
 
         # ---- Faster Mediapipe config ----
         self.mp_hands = mp.solutions.hands.Hands(
@@ -61,10 +61,11 @@ class VideoWorker:
         )
 
         # initialize capture (low latency settings)
-        self.cap = cv2.VideoCapture(url)
+        self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        #self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        #self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 10)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
 
         self.frame_count = 0
         time.sleep(0.2)
@@ -107,7 +108,7 @@ class VideoWorker:
 
             # Use last known good markers for display and pose
             if ids is not None:
-                #aruco.drawDetectedMarkers(frame, last_corners, last_ids)
+                aruco.drawDetectedMarkers(frame, corners, ids)
 
                 for idx, marker_id in enumerate(ids.flatten()):
 
@@ -139,9 +140,13 @@ class VideoWorker:
 
                     if marker_id == 0 and self.T_base_cam is None:
                         self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
+                        self.send_command = True
 
                     if self.T_base_cam is not None:
                         T_base_block = self.T_base_cam @ T_cam_marker
+
+                        if T_base_block[2, 2] < 0.9:
+                            continue
 
                         if marker_id != 0:
                             block_poses_in_base[marker_id] = T_base_block
@@ -172,8 +177,6 @@ class VideoWorker:
                 T_base_block = block_poses_in_base[self.next_block_id]
                 self.cmd_queue.put(("pick_and_place", (self.next_block_id, T_base_block)))
                 print(f"Sent pick_and_place request for block {self.next_block_id}")
-            else:
-                print("Block not visible!")
 
             if self.next_block_id == 7:
                 break
