@@ -20,6 +20,18 @@ tower_origin_base = np.array([0.3, -0.25, 0.0])
 even_rotation = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
 odd_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 
+T_position_tower = []
+for block in range(6):
+    
+    T_pos = np.eye(4)
+    T_pos[:3, 3] = tower_origin_base.copy() + np.array([
+        block_width*(1-block%3)*(block//3==0), 
+        block_width*(1-block%3)*(block//3==1), 
+        0.0])
+    T_pos[:3, :3] = even_rotation if (block//3==0) else odd_rotation
+    T_position_tower.append(T_pos)
+
+
 # Initialize RTDE interfaces and gripper
 class RobotWorker:
     def __init__(self, cmd_queue, resp_queue):
@@ -109,25 +121,8 @@ class RobotWorker:
         # Move back up
         self.moveL(t_above, R_gripper)
 
-    def place_block(self, current_block, current_layer):
-        is_even = (current_layer % 2 == 0)
-
-        # Create transform
-        T_place = np.eye(4)
-
-        # Base tower reference
-        T_place[:3, 3] = tower_origin_base.copy()
-
-        # Horizontal placement depending on orientation
-        if is_even:
-            # Blocks along X direction → shift X
-            T_place[0, 3] += block_width * (1 - current_block)
-            T_place[:3, :3] = even_rotation
-        else:
-            # Blocks along Y direction → shift Y
-            T_place[1, 3] -= block_width * (current_block - 1)
-            T_place[:3, :3] = odd_rotation
-
+    def place_block(self):
+        pos, height = look_at_tower()
         T_place[2, 3] = current_layer * block_height + 0.05
 
         self.moveL(T_place[:3, 3], T_place[:3, :3])
