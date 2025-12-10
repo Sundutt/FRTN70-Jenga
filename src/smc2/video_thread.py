@@ -19,8 +19,6 @@ marker_size_block = 0.0225
 block_width = 0.028
 block_height = 0.015
 
-tower_origin_base = np.array([0.1, -0.3, 0.0])
-
 base_marker_pos = np.array([0.400, -0.300, 0.000])  # example
 base_marker_rot = np.array([[-1, 0, 0],
                             [0, -1, 0],
@@ -29,9 +27,6 @@ base_marker_rot = np.array([[-1, 0, 0],
 T_base_marker = np.eye(4)
 T_base_marker[:3, :3] = base_marker_rot
 T_base_marker[:3, 3] = base_marker_pos
-
-even_rotation = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
-odd_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 
 # Load camera calibration (same as before)
 data = np.load("camera_charuco_calibration.npz")
@@ -111,6 +106,7 @@ class VideoWorker:
                 aruco.drawDetectedMarkers(frame, corners, ids)
 
                 for idx, marker_id in enumerate(ids.flatten()):
+                    print("Marker_id = ", marker_id)
 
                     # Decide if this marker should be processed
                     """should_process = (
@@ -173,9 +169,12 @@ class VideoWorker:
                         T_base_block = self.T_base_cam @ T_cam_marker
 
                         if T_base_block[2, 2] < 0.9:
+                            print("Block: ", marker_id, " bad image")
                             continue
                         
-                        if T_base_block[3, 1] > -0.3:
+                        if T_base_block[1, 3] > -0.3:
+                            print("Block: ", marker_id, " restricted zone, y = ", T_base_block[3, 1])
+
                             continue                     
 
                         block_poses_in_base[marker_id] = T_base_block
