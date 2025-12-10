@@ -121,9 +121,10 @@ class RobotWorker:
         # Move back up
         self.moveL(t_above, R_gripper)
 
-    def place_block(self):
+    def place_block(self, offset=0.05):
         pos, height = look_at_tower()
-        T_place[2, 3] = current_layer * block_height + 0.05
+        T_place = T_position_tower[pos]
+        T_place[2, 3] = height + offset
 
         self.moveL(T_place[:3, 3], T_place[:3, :3])
 
