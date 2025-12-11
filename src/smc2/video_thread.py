@@ -16,9 +16,6 @@ parameters = aruco.DetectorParameters()
 marker_size_calibration = 0.0748
 marker_size_block = 0.0225
 
-block_width = 0.028
-block_height = 0.015
-
 base_marker_pos = np.array([0.400, -0.300, 0.000])  # example
 base_marker_rot = np.array([[-1, 0, 0],
                             [0, -1, 0],
@@ -62,7 +59,6 @@ class VideoWorker:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
 
-        self.frame_count = 0
         time.sleep(0.2)
 
     def stop(self):
@@ -99,7 +95,7 @@ class VideoWorker:
 
             corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
 
-            block_poses_in_base = {}
+            block_poses_in_base = None
 
             # Use last known good markers for display and pose
             if ids is not None:
@@ -151,7 +147,11 @@ class VideoWorker:
                         T_cam_marker = rvec_tvec_to_T(rvec, tvec)
 
                         self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
+                        
                         self.send_command = True
+
+                        # send to robot thread
+                        self.cmd_queue.put(("set_T_base_cam", self.T_base_cam))
 
                     if marker_id != 0 and self.T_base_cam is not None:
                         size = marker_size_block
@@ -177,7 +177,7 @@ class VideoWorker:
 
                             continue                     
 
-                        block_poses_in_base[marker_id] = T_base_block
+                        block_poses_in_base = T_base_block
                         break
                         #cv2.drawFrameAxes(
                         #   frame, camera_matrix, dist_coeffs, rvec, tvec, 0.03
@@ -200,10 +200,9 @@ class VideoWorker:
                 self.cmd_queue.put(("shutdown", None))
                 break
 
-            if self.next_block_id in block_poses_in_base and self.send_command:
+            if self.send_command and self.T_base_cam is not None:
                 self.send_command = False
-                T_base_block = block_poses_in_base[self.next_block_id]
-                self.cmd_queue.put(("pick_and_place", (self.next_block_id, T_base_block)))
+                self.cmd_queue.put(("pick_and_place", (block_poses_in_base)))
                 print(f"Sent pick_and_place request for block {self.next_block_id}")
 
             if self.next_block_id == 7:
