@@ -1,4 +1,5 @@
-# robot_thread.py
+import cv2
+import cv2.aruco as aruco
 import rtde_control
 import rtde_receive
 from scipy.spatial.transform import Rotation as R_scipy
@@ -6,6 +7,28 @@ import xmlrpc.client
 import numpy as np
 import time
 from shared_state import pause_event
+
+# Keep identical constants/params as original script
+url = "http://klasthorgren:video123@10.29.147.128:8081/video"
+
+aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+parameters = aruco.DetectorParameters()
+
+size = 0.0225
+
+first_block = True
+
+# Load camera calibration (same as before)
+data = np.load("camera_charuco_calibration.npz")
+camera_matrix = data["camera_matrix"]
+dist_coeffs = data["dist_coeffs"]
+
+def rvec_tvec_to_T(rvec, tvec):
+    R, _ = cv2.Rodrigues(rvec)
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = tvec.flatten()
+    return T
 
 # Robot / gripper IPs (same values as before)
 ROBOT_IP = "192.168.1.150"
@@ -43,6 +66,8 @@ class RobotWorker:
         self.rtde_r = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
         self.cb = xmlrpc.client.ServerProxy(f"http://{GRIPPER_IP}:41414/")
         print("RTDE interfaces initialized.")
+
+        self.T_base_cam = None
 
     def open_gripper(self):
         """Fully open the 2FG7 using maximum external width."""
@@ -120,10 +145,12 @@ class RobotWorker:
 
         # Move back up
         self.moveL(t_above, R_gripper)
+        self.moveL([0.3, -0.25, 0.3], R_gripper)
 
     def place_block(self, offset=0.05):
-        pos, height = look_at_tower()
-        T_place = T_position_tower[pos]
+        pos, height = self.look_at_tower()
+        print("do i come here")
+        T_place = T_position_tower[pos].copy()
         T_place[2, 3] = height + offset
 
         self.moveL(T_place[:3, 3], T_place[:3, :3])
@@ -132,7 +159,7 @@ class RobotWorker:
 
         self.open_gripper()
 
-        if current_block == 2:
+        if pos == 2 or pos == 5:
             new_pose = T_place.copy()
 
             # get z value
@@ -144,7 +171,7 @@ class RobotWorker:
 
             # move to x-y orgin and turn gripper
             T_place[:2, 3] = tower_origin_base[:2]
-            if is_even:
+            if pos == 2:
                 T_place[:3, :3] = odd_rotation
             else:
                 T_place[:3, :3] = even_rotation
@@ -162,6 +189,119 @@ class RobotWorker:
         T_place[2, 3] += 0.10
         self.moveL(T_place[:3, 3], T_place[:3, :3])
 
+    def reconnect_camera(self, url):
+        cap = cv2.VideoCapture(url)
+        time.sleep(0.3)   # wait for actual frames to arrive
+        return cap
+
+    def disconnect_camera(self, cap):
+        try:
+            cap.release()
+        except:
+            pass
+        time.sleep(0.2)
+
+    def look_at_tower(self):
+        global first_block
+        cap = self.reconnect_camera(url)
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to grab frame")
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+
+            z_height = 0
+            low_layer = True
+
+            blocks_in_tower = []
+
+            placing_position = 0
+
+            if first_block:
+                first_block = False
+                self.disconnect_camera(cap)
+                return 0, 0
+                
+            if ids is not None:
+                for idx, marker_id in enumerate(ids.flatten()):
+                    rvec, tvec = None, None
+
+                    # If a size is wrong, pose estimation breaks, so this is important
+                    rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
+                        [corners[idx]],
+                        size,
+                        camera_matrix,
+                        dist_coeffs
+                    )
+
+                    rvec = rvecs[0]
+                    tvec = tvecs[0]
+
+                    T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+
+                    if self.T_base_cam is None:
+                        print("ERROR: T_base_cam not initialized yet")
+                        continue
+
+                    T_base_block = self.T_base_cam @ T_cam_marker
+                    
+                    if T_base_block[1, 3] < -0.3 or marker_id == 0:
+                        print("Block: ", marker_id, " not on Tower")
+                        continue
+                    
+                    for i in range(6):
+                        if (T_position_tower[i][0,3]-0.014 <= T_base_block[0, 3] <= T_position_tower[i][0,3]+0.014) and (T_position_tower[i][1,3]-0.014 <= T_base_block[1, 3] <= T_position_tower[i][1, 3]+0.014):
+                            #T_base_block in pos i
+                            if i == 1 or i == 4:
+                                if -0.5 <= T_base_block[0,0] <= 0.5:
+                                    blocks_in_tower.append(4)
+                                    if T_base_block[2, 3] > z_height:
+                                        z_height = T_base_block[2, 3]
+                                        low_layer = False
+                                    break
+                                else:
+                                    blocks_in_tower.append(1)
+                                    if T_base_block[2, 3] > z_height:
+                                        z_height = T_base_block[2, 3]
+                                        low_layer = True
+                                    break
+                            blocks_in_tower.append(i)
+                            if T_base_block[2, 3] > z_height:
+                                z_height = T_base_block[2, 3]
+                                if i < 3:
+                                    low_layer = True
+                                else:
+                                    low_layer = False  
+                            break
+                            
+                #decide where to place the next block
+                if low_layer:
+                    for i in range(3):
+                        if i not in blocks_in_tower:
+                            placing_position = i
+                            break
+                    else:
+                        if not blocks_in_tower:
+                            placing_position = 0
+                        else:
+                            placing_position = 3
+
+                else:
+                    for i in range(3, 6):
+                        if i not in blocks_in_tower:
+                            placing_position = i
+                            break
+                    else:
+                        placing_position = 0
+                
+                self.disconnect_camera(cap)
+                return placing_position, z_height
+                    
     def run(self):
         print("RobotWorker started, waiting for commands...")
         running = True
@@ -173,22 +313,23 @@ class RobotWorker:
                 break
 
             if cmd == "pick_and_place":
-                block_id, T_base_block = payload
-                print(f"RobotWorker executing pick_and_place for block {block_id}...")
+                T_base_block = payload
                 try:
                     # Execute pick/place exactly as original logic
                     self.pick_up_block_from_vision(T_base_block)
                     # place_block uses (current_block, current_layer)
-                    current_block = (block_id - 1) % 3
-                    current_layer = (block_id - 1) // 3
-                    self.place_block(current_block, current_layer)
+                    self.place_block()
                     # notify completion
                     try:
                         self.resp_queue.put("picked_and_placed")
                     except Exception:
                         pass
-                    print(f"RobotWorker finished pick_and_place for block {block_id}.")
                 except Exception as e:
                     print(f"Exception while performing pick_and_place: {e}")
+
+            if cmd == "set_T_base_cam":
+                self.T_base_cam = payload
+                print("Robot got T_base_cam:")
+                print(self.T_base_cam)
 
         print("RobotWorker stopped.")
