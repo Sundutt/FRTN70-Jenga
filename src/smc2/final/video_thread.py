@@ -155,7 +155,7 @@ class VideoWorker:
 
         # Use last known good markers for display and pose
         if ids is not None:
-            aruco.drawDetectedMarkers(frame, corners, ids)
+            #aruco.drawDetectedMarkers(frame, corners, ids)
 
             for idx, marker_id in enumerate(ids.flatten()):
                 #print("VT: Pick up new block function currently sees. Marker_id = ", marker_id)
@@ -173,8 +173,6 @@ class VideoWorker:
                     rvec = rvecs[0]
                     tvec = tvecs[0]
                     T_cam_marker = rvec_tvec_to_T(rvec, tvec)
-                    if T_cam_marker[2, 2] < 0.95:
-                        return
 
                     self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
                     
@@ -226,12 +224,12 @@ class VideoWorker:
         if self.first_block:
             print("VT: First block, placing on pos 0")
             self.first_block = False
-            self.cmd_queue.put(("place_block", (placing_position, height)))
+            self.cmd_queue.put(("place_block", (placing_position, height, None)))
             self.place_command = False
             return
             
         if ids is not None: 
-            aruco.drawDetectedMarkers(frame, corners, ids)
+            #aruco.drawDetectedMarkers(frame, corners, ids)
             for idx, marker_id in enumerate(ids.flatten()):
                 rvec, tvec = None, None
 
@@ -260,8 +258,7 @@ class VideoWorker:
                 if T_base_block[2,2] < 0.95:
                     return 
                 for i in range(6):
-                    if (self.T_position_tower[i][0,3]-0.015 <= T_base_block[0, 3] <= self.T_position_tower[i][0,3]+0.015) and (self.T_position_tower[i][1,3]-0.015 <= T_base_block[1, 3] <= self.T_position_tower[i][1, 3]+0.015):
-                        print("VT: Place block function. Block: ", marker_id, " on tower position: ", i, " . x = ", T_base_block[0, 3], " y= ", T_base_block[1,3])
+                    if ((self.T_position_tower[i][0,3]-0.015 <= T_base_block[0, 3] <= self.T_position_tower[i][0,3]+0.015)) and ((self.T_position_tower[i][1,3]-0.015 <= T_base_block[1, 3] <= self.T_position_tower[i][1, 3]+0.015)):
                         #T_base_block in pos i
                         if i == 1 or i == 4:
                             if -0.5 <= T_base_block[0,0] <= 0.5:
@@ -269,13 +266,17 @@ class VideoWorker:
                                 if T_base_block[2, 3] > height:
                                     height = T_base_block[2, 3]
                                     low_layer = False
+                                print("VT: Place block function. Block: ", marker_id, " on tower position: 4. x = ", T_base_block[0, 3], " y= ", T_base_block[1,3])
                                 break
-                            else:
+                            elif T_base_block[0, 0] <= -0.5 or T_base_block >= 0.5:
                                 blocks_in_tower.append(1)
                                 if T_base_block[2, 3] > height:
                                     height = T_base_block[2, 3]
                                     low_layer = True
+                                print("VT: Place block function. Block: ", marker_id, " on tower position: 1. x = ", T_base_block[0, 3], " y= ", T_base_block[1,3])
                                 break
+                        
+                        print("VT: Place block function. Block: ", marker_id, " on tower position: ", i, " . x = ", T_base_block[0, 3], " y= ", T_base_block[1,3])
                         blocks_in_tower.append(i)
                         if T_base_block[2, 3] > height:
                             height = T_base_block[2, 3]
@@ -305,5 +306,5 @@ class VideoWorker:
                 else:
                     placing_position = 0
             print("VT: Place block function. Placing block on position: ", placing_position) 
-            self.cmd_queue.put(("place_block", (placing_position, height)))
+            self.cmd_queue.put(("place_block", (placing_position, height, blocks_in_tower)))
             self.place_command = False

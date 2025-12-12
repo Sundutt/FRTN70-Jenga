@@ -66,7 +66,6 @@ class RobotWorker:
 
         t = np.array(t).reshape(3,)
         pose = [t[0], t[1], t[2], rx, ry, rz]
-
         # Start async motion
         self.rtde_c.moveL(pose, speed, accel, True)
 
@@ -75,12 +74,11 @@ class RobotWorker:
         while True:
             # Pause if hand detected
             if pause_event.is_set():
-                self.rtde_c.stopL(0.5, True)
-
+                self.rtde_c.stopL(0.5)
                 # Wait until hand disappears
                 while pause_event.is_set():
                     time.sleep(0.05)
-
+                #time.sleep(0.5)
                 # Resume movement
                 self.rtde_c.moveL(pose, speed, accel, True)
 
@@ -92,12 +90,12 @@ class RobotWorker:
                 break
 
             last_state = state
-            time.sleep(0.01)
+            time.sleep(0.1)
 
     def pick_up_block_from_vision(self, T_base_block):
         self.open_gripper()
         # Approach from above
-        pickup_height_offset = 0.05  # approach 10 cm above detected block
+        pickup_height_offset = 0.02  # approach 10 cm above detected block
         t_above = T_base_block[:3, 3].copy()
         t_above[2] += pickup_height_offset
 
@@ -121,9 +119,10 @@ class RobotWorker:
         self.moveL(t_above, R_gripper)
         self.moveL(tower_origin_base, R_gripper)
 
-    def place_block(self, pos, height, offset=0.05):
+    def place_block(self, pos, height, blocks_in_tower):
+        placing_height_offset = 0.02
         T_place = T_position_tower[pos].copy()
-        T_place[2, 3] = height + offset
+        T_place[2, 3] = height + placing_height_offset
 
         self.moveL(T_place[:3, 3], T_place[:3, :3])
 
@@ -131,7 +130,7 @@ class RobotWorker:
 
         self.open_gripper()
 
-        if pos == 2 or pos == 5:
+        if pos == 2 or pos == 5 or (pos == 1 and 2 in blocks_in_tower) or (pos == 4 and 5 in blocks_in_tower):
             new_pose = T_place.copy()
 
             # get z value
@@ -143,7 +142,7 @@ class RobotWorker:
 
             # move to x-y orgin and turn gripper
             T_place[:2, 3] = tower_origin_base[:2]
-            if pos == 2:
+            if pos == 2 or pos == 1:
                 T_place[:3, :3] = odd_rotation
             else:
                 T_place[:3, :3] = even_rotation
@@ -156,9 +155,8 @@ class RobotWorker:
 
             self.close_gripper()
             self.open_gripper()
-
         # raise end effector
-        T_place[2, 3] += 0.10
+        T_place[2, 3] += 0.20
         self.moveL(T_place[:3, 3], T_place[:3, :3])
                     
     def run(self):
@@ -189,10 +187,10 @@ class RobotWorker:
                     print(f"Exception while performing pick_block: {e}")
 
             if cmd == "place_block":
-                pos, height = payload
+                pos, height, blocks_in_tower = payload
                 try:
                     print("RT: got cmd to place block on T=\n", T_base_block)
-                    self.place_block(pos, height)
+                    self.place_block(pos, height, blocks_in_tower)
                     try:
                         self.resp_queue.put(("placed_block", None))
                     except Exception:
