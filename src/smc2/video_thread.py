@@ -44,7 +44,11 @@ class VideoWorker:
         self._running = True
         self.next_block_id = 1
         self.T_base_cam = None
-        self.send_command = False
+        self.pick_command = False
+        self.place_command = False
+        self.first_block = True
+        self.T_position_tower = []
+
 
         # ---- Faster Mediapipe config ----
         self.mp_hands = mp.solutions.hands.Hands(
@@ -53,13 +57,14 @@ class VideoWorker:
         )
 
         # initialize capture (low latency settings)
-        self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.cap.set(cv2.CAP_PROP_FPS, 10)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
+        self.cap = cv2.VideoCapture(url) #cv2.CAP_FFMPEG)
+        #self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        #self.cap.set(cv2.CAP_PROP_FPS, 10)
+        #self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+        #self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
 
         time.sleep(0.2)
+
 
     def stop(self):
         self._running = False
@@ -73,123 +78,23 @@ class VideoWorker:
                 print("Failed to grab frame")
                 break
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            self.detect_hand(frame)
+            
+            if self.pick_command or self.T_base_cam == None:
+                self.pickup_new_block(frame)
 
-            # ----- Hand detection (every frame, lightweight model) -----
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            hand_result = self.mp_hands.process(rgb)
-
-            if hand_result.multi_hand_landmarks:
-                pause_event.set()
-                cv2.putText(
-                    frame,
-                    "Hand detected!",
-                    (2500, 300),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    5,
-                    (0, 0, 255),
-                    4
-                )
-            else:
-                pause_event.clear()
-
-            corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
-
-            block_poses_in_base = None
-
-            # Use last known good markers for display and pose
-            if ids is not None:
-                aruco.drawDetectedMarkers(frame, corners, ids)
-
-                for idx, marker_id in enumerate(ids.flatten()):
-                    print("Marker_id = ", marker_id)
-
-                    # Decide if this marker should be processed
-                    """should_process = (
-                        (marker_id == 0 and self.T_base_cam is None) or
-                        (marker_id == self.next_block_id)
-                    )
-
-                    if not should_process:
-                        continue
-                    """
-                    """if marked_id == 0 and self.T_base_cam is not None:
-                        continue
-
-                    if marker_id == 0:
-                        size = marker_size_calibration
-                    else:
-                        size = marker_size_block
-
-                    rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-                        [corners[idx]],
-                        size,
-                        camera_matrix,
-                        dist_coeffs
-                    )
-
-                    rvec = rvecs[0]
-                    tvec = tvecs[0]
-
-                    T_cam_marker = rvec_tvec_to_T(rvec, tvec)
-                    """
-                    if marker_id == 0 and self.T_base_cam is None:
-                        size = marker_size_calibration
-                        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-                            [corners[idx]],
-                            size,
-                            camera_matrix,
-                            dist_coeffs
-                        )
-
-                        rvec = rvecs[0]
-                        tvec = tvecs[0]
-                        T_cam_marker = rvec_tvec_to_T(rvec, tvec)
-
-                        self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
-                        
-                        self.send_command = True
-
-                        # send to robot thread
-                        self.cmd_queue.put(("set_T_base_cam", self.T_base_cam))
-
-                    if marker_id != 0 and self.T_base_cam is not None:
-                        size = marker_size_block
-                        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-                            [corners[idx]],
-                            size,
-                            camera_matrix,
-                            dist_coeffs
-                        )
-
-                        rvec = rvecs[0]
-                        tvec = tvecs[0]
-                        T_cam_marker = rvec_tvec_to_T(rvec, tvec)
-
-                        T_base_block = self.T_base_cam @ T_cam_marker
-
-                        if T_base_block[2, 2] < 0.9:
-                            print("Block: ", marker_id, " bad image")
-                            continue
-                        
-                        if T_base_block[1, 3] > -0.3:
-                            print("Block: ", marker_id, " restricted zone, y = ", T_base_block[3, 1])
-
-                            continue                     
-
-                        block_poses_in_base = T_base_block
-                        break
-                        #cv2.drawFrameAxes(
-                        #   frame, camera_matrix, dist_coeffs, rvec, tvec, 0.03
-                        #)
+            if self.place_command:
+                self.place_block_in_tower(frame)
 
             # ----- Robot response queue -----
             try:
-                while True:
-                    resp = self.resp_queue.get_nowait()
-                    if resp == "picked_and_placed":
-                        self.next_block_id += 1
-                        self.send_command = True
+                resp, payload = self.resp_queue.get_nowait()
+                if resp == "init":
+                    self.T_position_tower = payload.copy()
+                if resp == "picked_block":
+                    self.place_command = True
+                if resp == "placed_block":
+                    self.pick_command = True
             except:
                 pass
 
@@ -200,14 +105,6 @@ class VideoWorker:
                 self.cmd_queue.put(("shutdown", None))
                 break
 
-            if self.send_command and self.T_base_cam is not None:
-                self.send_command = False
-                self.cmd_queue.put(("pick_and_place", (block_poses_in_base)))
-                print(f"Sent pick_and_place request for block {self.next_block_id}")
-
-            if self.next_block_id == 7:
-                break
-
             cv2.imshow("ArUco Block Detection + Robot Mapping", frame)
 
         try:
@@ -216,3 +113,173 @@ class VideoWorker:
             pass
         cv2.destroyAllWindows()
         print("VideoWorker stopped.")
+
+    def detect_hand(self, frame):
+        # ----- Hand detection (every frame, lightweight model) -----
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        hand_result = self.mp_hands.process(rgb)
+
+        if hand_result.multi_hand_landmarks:
+            pause_event.set()
+            cv2.putText(
+                frame,
+                "Hand detected!",
+                (2500, 300),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                5,
+                (0, 0, 255),
+                4
+            )
+        else:
+            pause_event.clear()
+
+    def pickup_new_block(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+
+        # Use last known good markers for display and pose
+        if ids is not None:
+            #aruco.drawDetectedMarkers(frame, corners, ids)
+
+            for idx, marker_id in enumerate(ids.flatten()):
+                print("Marker_id = ", marker_id)
+
+                # Decide if this marker should be processed
+                if marker_id == 0 and self.T_base_cam is None:
+                    size = marker_size_calibration
+                    rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
+                        [corners[idx]],
+                        size,
+                        camera_matrix,
+                        dist_coeffs
+                    )
+
+                    rvec = rvecs[0]
+                    tvec = tvecs[0]
+                    T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+
+                    self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
+                    
+                    self.pick_command = True
+
+                if marker_id != 0 and self.T_base_cam is not None:
+                    size = marker_size_block
+                    rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
+                        [corners[idx]],
+                        size,
+                        camera_matrix,
+                        dist_coeffs
+                    )
+
+                    rvec = rvecs[0]
+                    tvec = tvecs[0]
+                    T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+
+                    T_base_block = self.T_base_cam @ T_cam_marker
+
+                    if T_base_block[2, 2] < 0.9:
+                        print("Block: ", marker_id, " bad image")
+                        continue
+                    
+                    if T_base_block[1, 3] > -0.3:
+                        print("Block: ", marker_id, " restricted zone, y = ", T_base_block[1, 3])
+
+                        continue                     
+                    
+                    # Send pick command
+                    self.cmd_queue.put(("pick_block", T_base_block))
+                    self.pick_command = False
+                    break
+
+    def place_block_in_tower(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+
+        height = 0
+        low_layer = True
+
+        blocks_in_tower = []
+
+        placing_position = 0
+
+        if self.first_block:
+            self.first_block = False
+            self.cmd_queue.put(("place_block", (placing_position, height)))
+            self.place_command = False
+            
+        if ids is not None:
+            for idx, marker_id in enumerate(ids.flatten()):
+                rvec, tvec = None, None
+
+                # If a size is wrong, pose estimation breaks, so this is important
+                rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
+                    [corners[idx]],
+                    marker_size_block,
+                    camera_matrix,
+                    dist_coeffs
+                )
+
+                rvec = rvecs[0]
+                tvec = tvecs[0]
+
+                T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+
+                if self.T_base_cam is None:
+                    print("ERROR: T_base_cam not initialized yet")
+                    continue
+
+                T_base_block = self.T_base_cam @ T_cam_marker
+                
+                if T_base_block[1, 3] < -0.3 or marker_id == 0:
+                    print("Block: ", marker_id, " not on Tower")
+                    continue
+                
+                for i in range(6):
+                    if (self.T_position_tower[i][0,3]-0.014 <= T_base_block[0, 3] <= self.T_position_tower[i][0,3]+0.014) and (self.T_position_tower[i][1,3]-0.014 <= T_base_block[1, 3] <= self.T_position_tower[i][1, 3]+0.014):
+                        #T_base_block in pos i
+                        if i == 1 or i == 4:
+                            if -0.5 <= T_base_block[0,0] <= 0.5:
+                                blocks_in_tower.append(4)
+                                if T_base_block[2, 3] > height:
+                                    height = T_base_block[2, 3]
+                                    low_layer = False
+                                break
+                            else:
+                                blocks_in_tower.append(1)
+                                if T_base_block[2, 3] > height:
+                                    height = T_base_block[2, 3]
+                                    low_layer = True
+                                break
+                        blocks_in_tower.append(i)
+                        if T_base_block[2, 3] > height:
+                            height = T_base_block[2, 3]
+                            if i < 3:
+                                low_layer = True
+                            else:
+                                low_layer = False  
+                        break
+                        
+            #decide where to place the next block
+            if low_layer:
+                for i in range(3):
+                    if i not in blocks_in_tower:
+                        placing_position = i
+                        break
+                else:
+                    if not blocks_in_tower:
+                        placing_position = 0
+                    else:
+                        placing_position = 3
+
+            else:
+                for i in range(3, 6):
+                    if i not in blocks_in_tower:
+                        placing_position = i
+                        break
+                else:
+                    placing_position = 0
+            
+            self.cmd_queue.put(("place_block", (placing_position, height)))
+            self.place_command = False
