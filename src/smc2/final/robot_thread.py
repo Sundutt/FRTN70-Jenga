@@ -14,7 +14,7 @@ GRIPPER_IP = "192.168.1.1"
 block_width = 0.028
 block_height = 0.015
 
-tower_origin_base = np.array([0.3, -0.25, 0.0])
+tower_origin_base = np.array([0.3, -0.25, 0.3])
 
 even_rotation = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]])
 odd_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -26,7 +26,7 @@ for block in range(6):
     T_pos[:3, 3] = tower_origin_base.copy() + np.array([
         block_width*(1-block%3)*(block//3==0), 
         block_width*(1-block%3)*(block//3==1), 
-        0.0])
+        -0.3])
     T_pos[:3, :3] = even_rotation if (block//3==0) else odd_rotation
     T_position_tower.append(T_pos)
 

@@ -8,8 +8,8 @@ import mediapipe as mp
 from shared_state import pause_event
 
 # Keep identical constants/params as original script
-url = "http://klasthorgren:video123@10.29.147.128:8081/video"
-
+url = "http://klasthorgren:video123@10.29.147.128:8081/video" #Klas
+url = "http://10.89.236.92:8080/video" #Fredriks
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
 
