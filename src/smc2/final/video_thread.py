@@ -6,6 +6,7 @@ import time
 import threading
 import mediapipe as mp
 from shared_state import pause_event
+from queue import Empty
 
 # Keep identical constants/params as original script
 url = "http://klasthorgren:video123@10.29.147.128:8081/video" #Klas
@@ -75,12 +76,12 @@ class VideoWorker:
         while self._running:
             ret, frame = self.cap.read()
             if not ret:
-                print("Failed to grab frame")
+                print("VT: Failed to grab frame")
                 break
 
             self.detect_hand(frame)
             
-            if self.pick_command or self.T_base_cam == None:
+            if self.pick_command or self.T_base_cam is None:
                 self.pickup_new_block(frame)
 
             if self.place_command:
@@ -90,12 +91,15 @@ class VideoWorker:
             try:
                 resp, payload = self.resp_queue.get_nowait()
                 if resp == "init":
+                    print("VT: Got init from robot.")
                     self.T_position_tower = payload.copy()
                 if resp == "picked_block":
+                    print("VT: Will try to find pos to place block")
                     self.place_command = True
                 if resp == "placed_block":
+                    print("VT: Will try to find block to pick")
                     self.pick_command = True
-            except:
+            except Empty:
                 pass
 
             # ----- Keyboard -----
@@ -112,7 +116,7 @@ class VideoWorker:
         except:
             pass
         cv2.destroyAllWindows()
-        print("VideoWorker stopped.")
+        print("VT: VideoWorker stopped.")
 
     def detect_hand(self, frame):
         # ----- Hand detection (every frame, lightweight model) -----
@@ -120,16 +124,27 @@ class VideoWorker:
         hand_result = self.mp_hands.process(rgb)
 
         if hand_result.multi_hand_landmarks:
+            #print("VT: HAND DETECTED!")
             pause_event.set()
             cv2.putText(
                 frame,
                 "Hand detected!",
-                (2500, 300),
+                (300, 200),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                5,
+                2,
                 (0, 0, 255),
                 4
             )
+            for hand_landmarks in hand_result.multi_hand_landmarks:
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    mp.solutions.hands.HAND_CONNECTIONS,
+                    mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
+                    mp.solutions.drawing_styles.get_default_hand_connections_style()
+                )        
+
+                    
         else:
             pause_event.clear()
 
@@ -140,10 +155,10 @@ class VideoWorker:
 
         # Use last known good markers for display and pose
         if ids is not None:
-            #aruco.drawDetectedMarkers(frame, corners, ids)
+            aruco.drawDetectedMarkers(frame, corners, ids)
 
             for idx, marker_id in enumerate(ids.flatten()):
-                print("Marker_id = ", marker_id)
+                #print("VT: Pick up new block function currently sees. Marker_id = ", marker_id)
 
                 # Decide if this marker should be processed
                 if marker_id == 0 and self.T_base_cam is None:
@@ -158,9 +173,12 @@ class VideoWorker:
                     rvec = rvecs[0]
                     tvec = tvecs[0]
                     T_cam_marker = rvec_tvec_to_T(rvec, tvec)
+                    if T_cam_marker[2, 2] < 0.95:
+                        return
 
                     self.T_base_cam = T_base_marker @ np.linalg.inv(T_cam_marker)
                     
+                    print("VT: Is calibrated now.")
                     self.pick_command = True
 
                 if marker_id != 0 and self.T_base_cam is not None:
@@ -178,16 +196,17 @@ class VideoWorker:
 
                     T_base_block = self.T_base_cam @ T_cam_marker
 
-                    if T_base_block[2, 2] < 0.9:
-                        print("Block: ", marker_id, " bad image")
+                    if T_base_block[2, 2] < 0.95:
+                        #print("VT: Block: ", marker_id, " bad image")
                         continue
                     
                     if T_base_block[1, 3] > -0.3:
-                        print("Block: ", marker_id, " restricted zone, y = ", T_base_block[1, 3])
+                        #print("VT: Block: ", marker_id, " restricted zone, y = ", T_base_block[1, 3])
 
                         continue                     
                     
                     # Send pick command
+                    print("VT: Found new block ", marker_id, " to pick up")
                     self.cmd_queue.put(("pick_block", T_base_block))
                     self.pick_command = False
                     break
@@ -205,11 +224,14 @@ class VideoWorker:
         placing_position = 0
 
         if self.first_block:
+            print("VT: First block, placing on pos 0")
             self.first_block = False
             self.cmd_queue.put(("place_block", (placing_position, height)))
             self.place_command = False
+            return
             
-        if ids is not None:
+        if ids is not None: 
+            aruco.drawDetectedMarkers(frame, corners, ids)
             for idx, marker_id in enumerate(ids.flatten()):
                 rvec, tvec = None, None
 
@@ -227,17 +249,19 @@ class VideoWorker:
                 T_cam_marker = rvec_tvec_to_T(rvec, tvec)
 
                 if self.T_base_cam is None:
-                    print("ERROR: T_base_cam not initialized yet")
+                    print("VT: ERROR: T_base_cam not initialized yet")
                     continue
 
                 T_base_block = self.T_base_cam @ T_cam_marker
-                
+                 
                 if T_base_block[1, 3] < -0.3 or marker_id == 0:
-                    print("Block: ", marker_id, " not on Tower")
+                    #print("VT: Place block function. Block: ", marker_id, " not on Tower")
                     continue
-                
+                if T_base_block[2,2] < 0.95:
+                    return 
                 for i in range(6):
-                    if (self.T_position_tower[i][0,3]-0.014 <= T_base_block[0, 3] <= self.T_position_tower[i][0,3]+0.014) and (self.T_position_tower[i][1,3]-0.014 <= T_base_block[1, 3] <= self.T_position_tower[i][1, 3]+0.014):
+                    if (self.T_position_tower[i][0,3]-0.015 <= T_base_block[0, 3] <= self.T_position_tower[i][0,3]+0.015) and (self.T_position_tower[i][1,3]-0.015 <= T_base_block[1, 3] <= self.T_position_tower[i][1, 3]+0.015):
+                        print("VT: Place block function. Block: ", marker_id, " on tower position: ", i, " . x = ", T_base_block[0, 3], " y= ", T_base_block[1,3])
                         #T_base_block in pos i
                         if i == 1 or i == 4:
                             if -0.5 <= T_base_block[0,0] <= 0.5:
@@ -260,7 +284,7 @@ class VideoWorker:
                             else:
                                 low_layer = False  
                         break
-                        
+                 
             #decide where to place the next block
             if low_layer:
                 for i in range(3):
@@ -280,6 +304,6 @@ class VideoWorker:
                         break
                 else:
                     placing_position = 0
-            
+            print("VT: Place block function. Placing block on position: ", placing_position) 
             self.cmd_queue.put(("place_block", (placing_position, height)))
             self.place_command = False

@@ -11,7 +11,7 @@ ROBOT_IP = "192.168.1.150"
 GRIPPER_IP = "192.168.1.1"
 
 # Tower and geometry constants (identical to original)
-block_width = 0.028
+block_width = 0.03
 block_height = 0.015
 
 tower_origin_base = np.array([0.3, -0.25, 0.3])
@@ -106,8 +106,6 @@ class RobotWorker:
         R_z90 = R_scipy.from_euler('z', np.pi/2).as_matrix()     # Rotate around Z
         R_gripper = R_block @ R_flip @ R_z90
 
-        print(R_gripper)
-
         # Move above block
         self.moveL(t_above, R_gripper)
 
@@ -181,6 +179,7 @@ class RobotWorker:
             if cmd == "pick_block":
                 T_base_block = payload
                 try:
+                    print("RT: Got cmd to pick up block on T=\n", T_base_block)
                     self.pick_up_block_from_vision(T_base_block)
                     try:
                         self.resp_queue.put(("picked_block", None))
@@ -192,6 +191,7 @@ class RobotWorker:
             if cmd == "place_block":
                 pos, height = payload
                 try:
+                    print("RT: got cmd to place block on T=\n", T_base_block)
                     self.place_block(pos, height)
                     try:
                         self.resp_queue.put(("placed_block", None))
