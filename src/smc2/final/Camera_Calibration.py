@@ -16,7 +16,7 @@ board = aruco.CharucoBoard(
 )
 
 url = "http://klasthorgren:video123@10.37.196.204:8081/video"
-url = "http://10.89.236.92:8080/video"
+url = "http://10.37.125.170:8080/video"
 cap = cv2.VideoCapture(url)
 if not cap.isOpened():
     print("Cant open camera, exiting")

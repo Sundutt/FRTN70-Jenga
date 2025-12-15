@@ -142,7 +142,7 @@ class RobotWorker:
 
             # move to x-y orgin and turn gripper
             T_place[:2, 3] = tower_origin_base[:2]
-            if pos == 2 or pos == 1:
+            if pos == 2 or pos == 1 or pos == 0:
                 T_place[:3, :3] = odd_rotation
             else:
                 T_place[:3, :3] = even_rotation

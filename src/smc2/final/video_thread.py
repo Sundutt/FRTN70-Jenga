@@ -10,7 +10,7 @@ from queue import Empty
 
 # Keep identical constants/params as original script
 #url = "http://admin:admin@10.23.204.234:8081/video" #Klas
-url = "http://10.89.236.92:8080/video" #Fredriks
+url = "http://10.37.125.170:8080/video" #Fredriks
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
 
