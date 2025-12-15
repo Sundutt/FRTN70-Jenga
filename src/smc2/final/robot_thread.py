@@ -74,7 +74,7 @@ class RobotWorker:
         while True:
             # Pause if hand detected
             if pause_event.is_set():
-                self.rtde_c.stopL(0.5)
+                self.rtde_c.stopL(0.7)
                 # Wait until hand disappears
                 while pause_event.is_set():
                     time.sleep(0.05)
@@ -119,7 +119,7 @@ class RobotWorker:
         self.moveL(t_above, R_gripper)
         self.moveL(tower_origin_base, R_gripper)
 
-    def place_block(self, pos, height, blocks_in_tower):
+    def place_block(self, pos, height, clamping):
         placing_height_offset = 0.02
         T_place = T_position_tower[pos].copy()
         T_place[2, 3] = height + placing_height_offset
@@ -130,7 +130,7 @@ class RobotWorker:
 
         self.open_gripper()
 
-        if pos == 2 or pos == 5 or (pos == 1 and 2 in blocks_in_tower) or (pos == 4 and 5 in blocks_in_tower):
+        if clamping:
             new_pose = T_place.copy()
 
             # get z value
@@ -187,10 +187,10 @@ class RobotWorker:
                     print(f"Exception while performing pick_block: {e}")
 
             if cmd == "place_block":
-                pos, height, blocks_in_tower = payload
+                pos, height, clamping = payload
                 try:
                     print("RT: got cmd to place block on T=\n", T_base_block)
-                    self.place_block(pos, height, blocks_in_tower)
+                    self.place_block(pos, height, clamping)
                     try:
                         self.resp_queue.put(("placed_block", None))
                     except Exception:
