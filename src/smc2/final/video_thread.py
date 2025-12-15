@@ -9,7 +9,7 @@ from shared_state import pause_event
 from queue import Empty
 
 # Keep identical constants/params as original script
-url = "http://klasthorgren:video123@10.29.147.128:8081/video" #Klas
+#url = "http://admin:admin@10.23.204.234:8081/video" #Klas
 url = "http://10.89.236.92:8080/video" #Fredriks
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
@@ -221,10 +221,12 @@ class VideoWorker:
 
         placing_position = 0
 
+        clamping = False
+
         if self.first_block:
             print("VT: First block, placing on pos 0")
             self.first_block = False
-            self.cmd_queue.put(("place_block", (placing_position, height, None)))
+            self.cmd_queue.put(("place_block", (placing_position, height, clamping)))
             self.place_command = False
             return
             
@@ -255,8 +257,10 @@ class VideoWorker:
                 if T_base_block[1, 3] < -0.3 or marker_id == 0:
                     #print("VT: Place block function. Block: ", marker_id, " not on Tower")
                     continue
+                
                 if T_base_block[2,2] < 0.95:
-                    return 
+                    return
+                 
                 for i in range(6):
                     if ((self.T_position_tower[i][0,3]-0.015 <= T_base_block[0, 3] <= self.T_position_tower[i][0,3]+0.015)) and ((self.T_position_tower[i][1,3]-0.015 <= T_base_block[1, 3] <= self.T_position_tower[i][1, 3]+0.015)):
                         #T_base_block in pos i
@@ -287,24 +291,34 @@ class VideoWorker:
                         break
                  
             #decide where to place the next block
+            counter_for_clamping = 0
+            choose_pos = True
             if low_layer:
                 for i in range(3):
                     if i not in blocks_in_tower:
-                        placing_position = i
-                        break
-                else:
-                    if not blocks_in_tower:
-                        placing_position = 0
+                        if choose_pos:
+                            placing_position = i
+                            choose_pos = False
                     else:
-                        placing_position = 3
+                        counter_for_clamping += 1
+                if choose_pos:
+                    placing_position = 3
 
             else:
                 for i in range(3, 6):
                     if i not in blocks_in_tower:
-                        placing_position = i
-                        break
+                        if choose_pos:
+                            placing_position = i
+                            choose_pos = False
+                    else:
+                        counter_for_clamping += 1
                 else:
                     placing_position = 0
+
+            # If to blocks already was on the layer = Clamping
+            if counter_for_clamping == 2:
+                clamping = True
+
             print("VT: Place block function. Placing block on position: ", placing_position) 
-            self.cmd_queue.put(("place_block", (placing_position, height, blocks_in_tower)))
+            self.cmd_queue.put(("place_block", (placing_position, height, clamping)))
             self.place_command = False
